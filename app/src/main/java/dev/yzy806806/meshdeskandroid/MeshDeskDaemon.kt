@@ -50,7 +50,7 @@ object MeshDeskDaemon {
         val cidr = RootShell.exec("grep '^  mesh_cidr:' $CONFIG 2>/dev/null | awk '{print \$2}'")
             .trim().ifEmpty { "10.100.0.0/24" }
         val cmd = buildString {
-            append("ip rule show | grep -q 'pref 500' || ")
+            append("ip rule show | grep -q '^500:' || ")
             append("ip rule add pref 500 from all to $cidr lookup main; ")
             append("ip route flush cache; ")
             append("ip rule show | grep 500")
