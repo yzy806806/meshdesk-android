@@ -40,6 +40,25 @@ object MeshDeskDaemon {
         return alive.contains("yes")
     }
 
+    /**
+     * Android adapter: ensures the policy-routing rule so mesh-subnet traffic
+     * goes to the TUN instead of the default gateway (Android's per-network
+     * ip rules outrank the main table — without this, TX is blackholed).
+     * Idempotent: skips if the rule already exists.
+     */
+    fun ensurePolicyRule(): String {
+        val cidr = RootShell.exec("grep '^  mesh_cidr:' $CONFIG 2>/dev/null | awk '{print \$2}'")
+            .trim().ifEmpty { "10.100.0.0/24" }
+        val cmd = buildString {
+            append("ip rule show | grep -q 'pref 500' || ")
+            append("ip rule add pref 500 from all to $cidr lookup main; ")
+            append("ip route flush cache; ")
+            append("ip rule show | grep 500")
+        }
+        val out = RootShell.exec(cmd)
+        return if (out.contains("500")) "策略路由 OK ($cidr)" else "策略路由失败: $out"
+    }
+
     /** Starts the daemon with a clean env. Returns combined output. */
     fun start(): String {
         val cmd = buildString {
@@ -51,8 +70,13 @@ object MeshDeskDaemon {
             append("echo \$! > $PID && echo STARTED")
         }
         val out = RootShell.exec(cmd)
-        // verify
-        return if (isRunning()) "启动成功 (pid $(cat $PID 2>/dev/null))" else "启动失败: $out"
+        // verify + ensure policy rule (App-level Android adapter)
+        val rule = ensurePolicyRule()
+        return if (isRunning()) {
+            "启动成功，$rule"
+        } else {
+            "启动失败: $out"
+        }
     }
 
     /** Stops the daemon. */
