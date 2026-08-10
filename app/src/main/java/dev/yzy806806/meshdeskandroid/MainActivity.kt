@@ -88,18 +88,24 @@ fun MeshDeskApp() {
                         installed, version, running, loading, message,
                         onInstall = {
                             loading = true; message = ""
-                            val r = withContext(Dispatchers.IO) { BinaryInstaller.install(context) }
-                            loading = false; message = r; toast(r); refresh()
+                            scope.launch {
+                                val r = withContext(Dispatchers.IO) { BinaryInstaller.install(context) }
+                                loading = false; message = r; toast(r); refresh()
+                            }
                         },
                         onStart = {
                             loading = true
-                            val r = withContext(Dispatchers.IO) { MeshDeskDaemon.start() }
-                            loading = false; message = r; toast(r); refresh()
+                            scope.launch {
+                                val r = withContext(Dispatchers.IO) { MeshDeskDaemon.start() }
+                                loading = false; message = r; toast(r); refresh()
+                            }
                         },
                         onStop = {
                             loading = true
-                            val r = withContext(Dispatchers.IO) { MeshDeskDaemon.stop() }
-                            loading = false; toast(r); refresh()
+                            scope.launch {
+                                val r = withContext(Dispatchers.IO) { MeshDeskDaemon.stop() }
+                                loading = false; toast(r); refresh()
+                            }
                         }
                     )
                     1 -> ConfigTab(
@@ -216,8 +222,7 @@ fun ConfigTab(onSaved: () -> Unit) {
             value = config,
             onValueChange = { config = it },
             modifier = Modifier.fillMaxSize().weight(1f),
-            fontFamily = FontFamily.Monospace,
-            textStyle = MaterialTheme.typography.bodySmall
+            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
