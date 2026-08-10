@@ -76,6 +76,9 @@ fun MeshDeskApp() {
                 NavigationBarItem(
                     selected = tab == 1, onClick = { tab = 1 },
                     icon = { Text("⚙️") }, label = { Text("配置") })
+                NavigationBarItem(
+                    selected = tab == 2, onClick = { tab = 2 },
+                    icon = { Text("🔄") }, label = { Text("更新") })
             }
         }
     ) { padding ->
@@ -113,6 +116,23 @@ fun MeshDeskApp() {
                             scope.launch {
                                 val r = withContext(Dispatchers.IO) { MeshDeskDaemon.start() }
                                 message = r; toast("配置已保存并重启")
+                            }
+                        }
+                    )
+                    2 -> UpdateTab(
+                        currentVersion = version,
+                        onUpdate = { rel ->
+                            loading = true; message = ""
+                            scope.launch {
+                                val r = withContext(Dispatchers.IO) { MeshDeskUpdater.update(context, rel) }
+                                loading = false; message = r; toast(r); refresh()
+                            }
+                        },
+                        onRollback = {
+                            loading = true; message = ""
+                            scope.launch {
+                                val r = withContext(Dispatchers.IO) { MeshDeskUpdater.rollback() }
+                                loading = false; message = r; toast(r); refresh()
                             }
                         }
                     )
@@ -269,3 +289,98 @@ reality:
   enabled: false
 peers: []
 """.trimIndent()
+
+@Composable
+fun UpdateTab(
+    currentVersion: String,
+    onUpdate: (MeshDeskUpdater.Release) -> Unit,
+    onRollback: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var releases by remember { mutableStateOf<List<MeshDeskUpdater.Release>>(emptyList()) }
+    var checked by remember { mutableStateOf(false) }
+    var hasBackup by remember { mutableStateOf(false) }
+    var expandedTag by remember { mutableStateOf<String?>(null) }
+
+    fun check() {
+        scope.launch {
+            releases = withContext(Dispatchers.IO) { MeshDeskUpdater.fetchReleases(5) }
+            hasBackup = withContext(Dispatchers.IO) { MeshDeskUpdater.hasBackup() }
+            checked = true
+        }
+    }
+
+    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("MeshDesk 更新", style = MaterialTheme.typography.titleMedium)
+
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("当前版本: ${currentVersion.ifEmpty { "未安装" }}", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    if (hasBackup) "有可用回滚备份" else "无回滚备份",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (hasBackup) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                )
+                Button(onClick = { check() }, modifier = Modifier.fillMaxWidth()) {
+                    Text("检查更新")
+                }
+                if (hasBackup) {
+                    OutlinedButton(onClick = onRollback, modifier = Modifier.fillMaxWidth()) {
+                        Text("回滚到上一版本")
+                    }
+                }
+            }
+        }
+
+        if (checked) {
+            if (releases.isEmpty()) {
+                Text("检查失败或没有可用的 release", color = MaterialTheme.colorScheme.error)
+            } else {
+                Text("最近发布:", style = MaterialTheme.typography.titleSmall)
+                androidx.compose.foundation.lazy.LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(releases.size) { i ->
+                        val rel = releases[i]
+                        Card {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(rel.tag, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                    Text(
+                                        rel.publishedAt.take(10),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                                if (expandedTag == rel.tag) {
+                                    Text(
+                                        rel.body.ifEmpty { "(无更新日志)" },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 15,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    TextButton(onClick = { expandedTag = if (expandedTag == rel.tag) null else rel.tag }) {
+                                        Text(if (expandedTag == rel.tag) "收起" else "更新日志")
+                                    }
+                                    if (rel.assetUrl != null) {
+                                        Button(onClick = { onUpdate(rel) }, enabled = rel.tag != currentVersion.trim()) {
+                                            Text(if (rel.tag == currentVersion.trim()) "当前版本" else "更新到此版本")
+                                        }
+                                    } else {
+                                        Text("无 arm64 二进制", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            Text("点击「检查更新」查看 GitHub Releases 最新版本。", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
