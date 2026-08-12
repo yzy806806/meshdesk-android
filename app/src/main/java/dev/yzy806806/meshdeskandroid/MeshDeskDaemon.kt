@@ -115,4 +115,53 @@ object MeshDeskDaemon {
                 "toybox wget -qO- http://127.0.0.1:52888/api/stats 2>/dev/null || echo '{}'"
         )
     }
+
+    // ── Boot autostart (Magisk module, written by the app as root) ──────────
+
+    private const val MODULE_DIR = "/data/adb/modules/meshdesk-autostart"
+
+    /** True if the autostart Magisk module is installed. */
+    fun isAutostartInstalled(): Boolean =
+        RootShell.exec("ls $MODULE_DIR/module.prop 2>/dev/null").contains("module.prop")
+
+    /**
+     * Installs a Magisk module that starts the daemon on boot (root layer,
+     * independent of the app being alive). Takes effect after reboot.
+     */
+    fun installAutostart(): String {
+        val moduleProp = "id=meshdesk-autostart\n" +
+            "name=MeshDesk autostart\n" +
+            "version=v1.0\nversionCode=1\n" +
+            "author=yzy806806\n" +
+            "description=Start meshdesk daemon on boot + ensure policy route\n"
+        val serviceSh = "#!/system/bin/sh\n" +
+            "# start meshdesk daemon on boot + policy route\n" +
+            "sleep 5\n" +
+            "[ -f ${MeshDeskDaemon.BIN} ] || exit 0\n" +
+            "env -i PATH=/sbin:/system/bin:/system/xbin:/system/sbin " +
+            "nohup ${MeshDeskDaemon.BIN} --config ${MeshDeskDaemon.CONFIG} " +
+            "> ${MeshDeskDaemon.LOG} 2>&1 &\n" +
+            "sleep 2\n" +
+            "ip rule add pref 500 from all to 10.100.0.0/24 lookup main 2>/dev/null\n" +
+            "exit 0\n"
+
+        val cmd = buildString {
+            append("mkdir -p $MODULE_DIR && ")
+            append("printf '%s' '${moduleProp.replace("'", "'\\''")}' > $MODULE_DIR/module.prop && ")
+            append("printf '%s' '${serviceSh.replace("'", "'\\''")}' > $MODULE_DIR/service.sh && ")
+            append("chmod 755 $MODULE_DIR/service.sh && echo INSTALLED")
+        }
+        val out = RootShell.exec(cmd)
+        return if (out.contains("INSTALLED")) {
+            "自启模块已安装，重启手机后生效"
+        } else {
+            "安装失败: $out"
+        }
+    }
+
+    /** Removes the autostart module. */
+    fun removeAutostart(): String {
+        val out = RootShell.exec("rm -rf $MODULE_DIR && echo REMOVED")
+        return if (out.contains("REMOVED")) "自启模块已移除" else "移除失败: $out"
+    }
 }

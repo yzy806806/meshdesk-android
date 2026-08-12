@@ -39,21 +39,24 @@ fun MeshDeskApp() {
     var installed by remember { mutableStateOf(false) }
     var version by remember { mutableStateOf("") }
     var running by remember { mutableStateOf(false) }
+    var autostart by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
 
     fun refresh() {
         scope.launch {
-            val (i, v, r) = withContext(Dispatchers.IO) {
-                Triple(
+            val (i, v, r, a) = withContext(Dispatchers.IO) {
+                Quad(
                     MeshDeskDaemon.isInstalled(),
                     MeshDeskDaemon.version(),
-                    MeshDeskDaemon.isRunning()
+                    MeshDeskDaemon.isRunning(),
+                    MeshDeskDaemon.isAutostartInstalled()
                 )
             }
             installed = i
             version = v
             running = r
+            autostart = a
         }
     }
 
@@ -88,7 +91,7 @@ fun MeshDeskApp() {
                 rootOk == false -> RootNotAvailable()
                 else -> when (tab) {
                     0 -> StatusTab(
-                        installed, version, running, loading, message,
+                        installed, version, running, autostart, loading, message,
                         onInstall = {
                             loading = true; message = ""
                             scope.launch {
@@ -108,6 +111,16 @@ fun MeshDeskApp() {
                             scope.launch {
                                 val r = withContext(Dispatchers.IO) { MeshDeskDaemon.stop() }
                                 loading = false; toast(r); refresh()
+                            }
+                        },
+                        onAutostartToggle = { enable ->
+                            loading = true; message = ""
+                            scope.launch {
+                                val r = withContext(Dispatchers.IO) {
+                                    if (enable) MeshDeskDaemon.installAutostart()
+                                    else MeshDeskDaemon.removeAutostart()
+                                }
+                                loading = false; message = r; toast(r); refresh()
                             }
                         }
                     )
@@ -160,11 +173,13 @@ fun StatusTab(
     installed: Boolean,
     version: String,
     running: Boolean,
+    autostart: Boolean,
     loading: Boolean,
     message: String,
     onInstall: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onAutostartToggle: (Boolean) -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Card {
@@ -181,6 +196,22 @@ fun StatusTab(
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace
                 )
+                if (installed) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("开机自启 (Magisk 模块)", modifier = Modifier.weight(1f))
+                        Switch(
+                            checked = autostart,
+                            onCheckedChange = { onAutostartToggle(it) },
+                            enabled = !loading
+                        )
+                    }
+                    Text(
+                        if (autostart) "重启手机后 daemon 自动启动（root 层，App 被杀不影响）"
+                        else "开启后写入 Magisk 模块，重启手机生效",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
             }
         }
 
@@ -275,16 +306,24 @@ mesh:
   tun_mtu: 1400
   tun_name: mesh0
   dns_enabled: false
+  zone: cn                        # zone tag (v1.5.8+): same zone = UDP P2P, cross = Reality only
 node:
   hostname: redmi
   identity_file: /data/adb/meshdesk/identity.pem
   web: :52888
 p2p:
-  advertise_endpoints: []
+  advertise_endpoints: []         # no public port; IPv6 inbound works if announced
   enabled: true
   gossip_interval: 30
   max_peers: 256
-  max_relay_hops: 2
+  max_relay_hops: 2               # multi-hop relay bound (v1.5.11+)
+proxy:
+  socks5:
+    # entry_listen: 0.0.0.0:10811 # uncomment to enable SOCKS5 entry
+    # entry_username: mesh       # required for non-loopback
+    # entry_password: secret
+    # exit_node: fc709e08...     # pin to ONE fixed exit (v1.5.11)
+    # exit_nodes: [a..., b...]   # or list — lowest live RTT picked
 reality:
   enabled: false
 peers: []
@@ -316,7 +355,7 @@ fun UpdateTab(
 
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("当前版本: ${currentVersion.ifEmpty { "未安装" }}", style = MaterialTheme.typography.bodyLarge)
+                Text("当前版本: ${MeshDeskUpdater.normalizeVersion(currentVersion).ifEmpty { "未安装" }}", style = MaterialTheme.typography.bodyLarge)
                 Text(
                     if (hasBackup) "有可用回滚备份" else "无回滚备份",
                     style = MaterialTheme.typography.bodySmall,
@@ -367,8 +406,9 @@ fun UpdateTab(
                                         Text(if (expandedTag == rel.tag) "收起" else "更新日志")
                                     }
                                     if (rel.assetUrl != null) {
-                                        Button(onClick = { onUpdate(rel) }, enabled = rel.tag != currentVersion.trim()) {
-                                            Text(if (rel.tag == currentVersion.trim()) "当前版本" else "更新到此版本")
+                                        val isCurrent = MeshDeskUpdater.normalizeVersion(currentVersion) == rel.tag
+                                        Button(onClick = { onUpdate(rel) }, enabled = !isCurrent) {
+                                            Text(if (isCurrent) "当前版本" else "更新到此版本")
                                         }
                                     } else {
                                         Text("无 arm64 二进制", style = MaterialTheme.typography.bodySmall)

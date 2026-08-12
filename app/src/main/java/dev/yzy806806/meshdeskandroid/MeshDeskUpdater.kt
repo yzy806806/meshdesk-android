@@ -67,6 +67,15 @@ object MeshDeskUpdater {
         RootShell.exec("ls -la ${MeshDeskDaemon.BIN}$BACKUP_SUFFIX 2>/dev/null").contains("meshdesk")
 
     /**
+     * Normalizes a version string to a comparable tag, e.g.
+     * "meshdesk v1.5.11" / "v1.5.11" / "v1.5.11 (commit...)" → "v1.5.11".
+     */
+    fun normalizeVersion(raw: String): String {
+        val m = Regex("v\\d+\\.\\d+\\.\\d+").find(raw)
+        return m?.value ?: raw.trim()
+    }
+
+    /**
      * Updates the binary: stop daemon → backup current → download new →
      * replace → restart. Preserves config/identity. Returns result message.
      */
