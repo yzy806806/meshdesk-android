@@ -45,18 +45,24 @@ fun MeshDeskApp() {
 
     fun refresh() {
         scope.launch {
-            val (i, v, r, a) = withContext(Dispatchers.IO) {
-                Quad(
+            data class State(
+                val installed: Boolean,
+                val version: String,
+                val running: Boolean,
+                val autostart: Boolean
+            )
+            val s = withContext(Dispatchers.IO) {
+                State(
                     MeshDeskDaemon.isInstalled(),
                     MeshDeskDaemon.version(),
                     MeshDeskDaemon.isRunning(),
                     MeshDeskDaemon.isAutostartInstalled()
                 )
             }
-            installed = i
-            version = v
-            running = r
-            autostart = a
+            installed = s.installed
+            version = s.version
+            running = s.running
+            autostart = s.autostart
         }
     }
 
