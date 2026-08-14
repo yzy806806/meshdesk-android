@@ -26,14 +26,22 @@ object BinaryInstaller {
             conn.setRequestProperty("User-Agent", "MeshDeskAndroid")
             val body = conn.inputStream.bufferedReader().use { it.readText() }
             conn.disconnect()
-            val tag = Regex("\"tag_name\":\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
-                ?: return null
-            // find the arm64 asset browser_download_url
-            val urlRe = Regex(
-                "\"name\":\\s*\"$ASSET_NAME\",[^}]*?\"browser_download_url\":\\s*\"([^\"]+)\""
-            ).find(body)?.groupValues?.get(1)
-                ?: return null
-            tag to urlRe
+            val rel = org.json.JSONObject(body)
+            val tag = rel.optString("tag_name", "").ifEmpty { return null }
+            // find the arm64 asset
+            var url: String? = null
+            val assets = rel.optJSONArray("assets")
+            if (assets != null) {
+                for (j in 0 until assets.length()) {
+                    val a = assets.getJSONObject(j)
+                    if (a.optString("name", "") == ASSET_NAME) {
+                        url = a.optString("browser_download_url", "")
+                        break
+                    }
+                }
+            }
+            url ?: return null
+            tag to url
         } catch (e: Exception) {
             null
         }

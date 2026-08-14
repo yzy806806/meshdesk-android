@@ -31,6 +31,7 @@ object MeshDeskUpdater {
 
     /**
      * Fetches the latest N releases (default 5). Returns empty on failure.
+     * Uses org.json (Android built-in) — robust against field ordering.
      */
     fun fetchReleases(limit: Int = 5): List<Release> {
         return try {
@@ -41,20 +42,26 @@ object MeshDeskUpdater {
             val body = conn.inputStream.bufferedReader().use { it.readText() }
             conn.disconnect()
 
+            val root = org.json.JSONArray(body)
             val releases = mutableListOf<Release>()
-            // parse each release object
-            val re = Regex("\"tag_name\":\\s*\"([^\"]+)\",\\s*\"target_commitish\":[^}]*?\"body\":\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
-            for (m in re.findAll(body)) {
-                val tag = m.groupValues[1]
-                val rawBody = m.groupValues[2]
-                    .replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")
-                // find arm64 asset url within this release's assets
-                val assetRe = Regex("\"name\":\\s*\"$ASSET_NAME\",[^}]*?\"browser_download_url\":\\s*\"([^\"]+)\"")
-                val assetUrl = assetRe.find(body)?.groupValues?.get(1)
-                // published_at
-                val pubRe = Regex("\"published_at\":\\s*\"([^\"]+)\"")
-                val pub = pubRe.find(body)?.groupValues?.get(1) ?: ""
-                releases.add(Release(tag, rawBody, pub, assetUrl))
+            for (i in 0 until root.length()) {
+                val rel = root.getJSONObject(i)
+                val tag = rel.optString("tag_name", "")
+                val body2 = rel.optString("body", "")
+                val pub = rel.optString("published_at", "")
+                // find arm64 asset within THIS release's assets array
+                var assetUrl: String? = null
+                val assets = rel.optJSONArray("assets")
+                if (assets != null) {
+                    for (j in 0 until assets.length()) {
+                        val a = assets.getJSONObject(j)
+                        if (a.optString("name", "") == ASSET_NAME) {
+                            assetUrl = a.optString("browser_download_url", "")
+                            break
+                        }
+                    }
+                }
+                releases.add(Release(tag, body2, pub, assetUrl))
             }
             releases
         } catch (e: Exception) {
