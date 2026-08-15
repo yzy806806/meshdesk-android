@@ -65,6 +65,7 @@ object MeshDeskUpdater {
             }
             releases
         } catch (e: Exception) {
+            android.util.Log.e("MeshDeskUpdater", "fetchReleases failed", e)
             emptyList()
         }
     }
