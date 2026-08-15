@@ -128,6 +128,13 @@ fun MeshDeskApp() {
                                 }
                                 loading = false; message = r; toast(r); refresh()
                             }
+                        },
+                        onRefreshN1 = {
+                            loading = true; message = ""
+                            scope.launch {
+                                val r = withContext(Dispatchers.IO) { MeshDeskDaemon.refreshN1Endpoint() }
+                                loading = false; message = r; toast(r); refresh()
+                            }
                         }
                     )
                     1 -> ConfigTab(
@@ -186,6 +193,7 @@ fun StatusTab(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onAutostartToggle: (Boolean) -> Unit,
+    onRefreshN1: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Card {

@@ -120,13 +120,21 @@ object MeshDeskDaemon {
 
     private const val MODULE_DIR = "/data/adb/modules/meshdesk-autostart"
 
-    /** True if the autostart Magisk module is installed. */
-    fun isAutostartInstalled(): Boolean =
-        RootShell.exec("ls $MODULE_DIR/module.prop 2>/dev/null").contains("module.prop")
+    /** True if the autostart Magisk module is installed (incl. DNS config). */
+    fun isAutostartInstalled(): Boolean {
+        val ok = RootShell.exec(
+            "ls $MODULE_DIR/module.prop $MODULE_DIR/system/etc/resolv.conf 2>/dev/null"
+        )
+        return ok.contains("module.prop") && ok.contains("resolv.conf")
+    }
 
     /**
      * Installs a Magisk module that starts the daemon on boot (root layer,
      * independent of the app being alive). Takes effect after reboot.
+     *
+     * Also bundles system/etc/resolv.conf — Android has no /etc/resolv.conf,
+     * and the pure-Go meshdesk resolver needs it for DNS. Magisk systemless-
+     * mounts it so the daemon can resolve peer hostnames (e.g. n1.fxxkccp.top).
      */
     fun installAutostart(): String {
         val moduleProp = "id=meshdesk-autostart\n" +
@@ -144,16 +152,20 @@ object MeshDeskDaemon {
             "sleep 2\n" +
             "ip rule add pref 500 from all to 10.100.0.0/24 lookup main 2>/dev/null\n" +
             "exit 0\n"
+        // resolv.conf so the pure-Go daemon can resolve peer hostnames
+        // (Android lacks /etc/resolv.conf; Magisk systemless-mounts this)
+        val resolvConf = "nameserver 223.5.5.5\nnameserver 119.29.29.29\n"
 
         val cmd = buildString {
-            append("mkdir -p $MODULE_DIR && ")
+            append("mkdir -p $MODULE_DIR/system/etc && ")
             append("printf '%s' '${moduleProp.replace("'", "'\\''")}' > $MODULE_DIR/module.prop && ")
             append("printf '%s' '${serviceSh.replace("'", "'\\''")}' > $MODULE_DIR/service.sh && ")
-            append("chmod 755 $MODULE_DIR/service.sh && echo INSTALLED")
+            append("printf '%s' '${resolvConf.replace("'", "'\\''")}' > $MODULE_DIR/system/etc/resolv.conf && ")
+            append("chmod 755 $MODULE_DIR/service.sh && chmod 644 $MODULE_DIR/system/etc/resolv.conf && echo INSTALLED")
         }
         val out = RootShell.exec(cmd)
         return if (out.contains("INSTALLED")) {
-            "自启模块已安装，重启手机后生效"
+            "自启模块已安装（含 DNS 配置），重启手机后生效"
         } else {
             "安装失败: $out"
         }
@@ -163,5 +175,51 @@ object MeshDeskDaemon {
     fun removeAutostart(): String {
         val out = RootShell.exec("rm -rf $MODULE_DIR && echo REMOVED")
         return if (out.contains("REMOVED")) "自启模块已移除" else "移除失败: $out"
+    }
+
+    // ── N1 dynamic IPv6 (SLAAC) refresh ────────────────────────────────────
+    // N1's IPv6 is SLAAC (changes over time); a hard-coded IP in config/peers
+    // cache goes stale. The app resolves n1.fxxkccp.top periodically and
+    // updates the endpoint, then restarts the daemon so it reconnects.
+
+    private const val N1_HOST = "n1.fxxkccp.top"
+    private const val N1_PUBKEY = "28c788e7cda05bb5873bbe94c3ba006f441a134d3ff605dac4e151b52770c679"
+
+    /** Resolves the current N1 IPv6 via DNS. Returns null on failure. */
+    fun resolveN1Ipv6(): String? {
+        val out = RootShell.exec("getent hosts $N1_HOST 2>/dev/null | head -1")
+        // e.g. "2409:8a30:...  n1.fxxkccp.top"
+        val m = Regex("([0-9a-f:]+)").find(out)
+        val ip = m?.groupValues?.get(1)
+        return ip?.takeIf { it.contains(":") }
+    }
+
+    /**
+     * Ensures the N1 peer entry in config.yaml uses the current resolved IPv6
+     * (or the hostname if the binary resolves per-connect). Returns a
+     * user-facing message. Restarts the daemon if it was running.
+     */
+    fun refreshN1Endpoint(): String {
+        val ip = resolveN1Ipv6() ?: return "解析 $N1_HOST 失败"
+        val config = readConfig()
+        if (!config.contains(N1_PUBKEY)) {
+            return "config 中没有 N1 peer（gossip 自动发现，无需手动维护）"
+        }
+        // replace any [2409:...]:52888 or 2409:...:52888 under N1's entry with the fresh IP
+        val updated = config.replace(
+            Regex("endpoint: '?\\[[0-9a-f:]+\\]:52888'?"),
+            "endpoint: '[$ip]:52888'"
+        )
+        if (updated == config) {
+            return "N1 地址无需更新（当前 $ip）"
+        }
+        val wasRunning = isRunning()
+        if (!writeConfig(updated)) return "写入 config 失败"
+        if (wasRunning) {
+            stop()
+            val start = start()
+            return "N1 地址已更新为 $ip 并重启，$start"
+        }
+        return "N1 地址已更新为 $ip"
     }
 }
